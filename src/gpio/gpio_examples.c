@@ -1,13 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "xparameters.h"
 #include "platform.h"
 #include "xstatus.h"
 #include "xgpiops.h"
 
+/* Define the Microzed user LED and user pushbutton switch pin numbers */
 #define GPIO_UZED_LED 47
+#define GPIO_UZED_PBSW 51
 
 #define GPIO_INPUT 0
 #define GPIO_OUTPUT 1
@@ -15,8 +18,11 @@
 #define GPIO_OUTPUT_DISABLE 0
 #define GPIO_OUTPUT_ENABLE 1
 
-#define LED_ON 0x1
-#define LED_OFF 0x0
+#define LED_OFF 0
+#define LED_ON 1
+
+#define PBSW_OFF 0
+#define PBSW_ON 1
 
 #define ASCII_ESC 27
 
@@ -35,10 +41,61 @@ void gpio_summary(XGpioPs *gpio_ptr)
 	return;
 }
 
+int gpio_blink_led(XGpioPs *gpio_ptr, uint32_t pin, unsigned long tms)
+{
+	/* Do not try to drive a pin that is not an output */
+	if (XGpioPs_GetDirectionPin(gpio_ptr, pin) != GPIO_OUTPUT) {
+		fprintf(stderr, "Pin %ld not configured as an output\n", pin);
+		return -1;
+	}
+
+	/* Do not try to blink an output that is disabled */
+	if (XGpioPs_GetOutputEnablePin(gpio_ptr, pin) != GPIO_OUTPUT_ENABLE) {
+		fprintf(stderr, "Output pin %ld not enabled\n", pin);
+		return -1;
+	}
+
+	/* 
+	 * Our pulse deliberately begins with an ON condition, so if the LED is
+	 * already being driven, a delay will occur before a visible blink
+	 */
+	XGpioPs_WritePin(gpio_ptr, pin, LED_ON);
+	usleep(tms);
+	XGpioPs_WritePin(gpio_ptr, pin, LED_OFF);
+	usleep(tms);
+
+	return 0;
+}
+
+void gpio_toggle_led(XGpioPs *gpio_ptr, uint32_t pin)
+{
+	uint32_t current;
+	current = XGpioPs_ReadPin(gpio_ptr, pin);
+	XGpioPs_WritePin(gpio_ptr, pin, !current);
+	return;
+}
+
+void gpio_wait_pbsw(XGpioPs *gpio_ptr, uint32_t pin)
+{
+	for (;;) {	
+		if (XGpioPs_ReadPin(gpio_ptr, pin) == PBSW_ON) {
+			/* 10ms time for debouncing should work */
+			usleep(100000);
+			if (XGpioPs_ReadPin(gpio_ptr, pin) == PBSW_ON) {
+				break;
+			} else {
+				continue;
+			}
+		}
+	}
+	return;
+}
+
 int main(int args, char *argv[])
 {
 	init_platform();
 
+	int i;
 	int status;
 
 	/* Pointer to the driver instance */
@@ -50,15 +107,6 @@ int main(int args, char *argv[])
 	fprintf(stdout, "%c[2J", ASCII_ESC );
 	fprintf(stdout, "GPIO Examples\n");
 	fprintf(stdout, "========================\n");
-
-	/*
-	 * Per the GPIO driver API documentation, the steps appear to be a)
-	 * allocate memory for the GPIO driver instance, b) lookup the
-	 * configuration for the target device, c) initialize the GPIO with the
-	 * relevant values from the configuration.  Once this is done, desired
-	 * GPIO behavior can be configured (e.g., pin directions can be set) and
-	 * the GPIO interface can be used.
-	 */
 
 	/* 
 	 * Allocate some heap memory for the GPIO driver instance - there is
@@ -97,13 +145,33 @@ int main(int args, char *argv[])
 		return XST_FAILURE;
 	}
 
-	/* Set the direction of the GPIO pin and enable the output */
-	fprintf(stdout, "Enabled GPIO pin %d\n", GPIO_UZED_LED);
+	/* Set the direction of the GPIO pin driving the LED and enable its output */
 	XGpioPs_SetDirectionPin(gpio_ptr, GPIO_UZED_LED, GPIO_OUTPUT);
 	XGpioPs_SetOutputEnablePin(gpio_ptr, GPIO_UZED_LED, GPIO_OUTPUT_ENABLE);
-	XGpioPs_WritePin(gpio_ptr, GPIO_UZED_LED, LED_ON);
-	sleep(10);
-	XGpioPs_WritePin(gpio_ptr, GPIO_UZED_LED, LED_OFF);
+	fprintf(stdout, "Enabled GPIO pin %d as an output\n", GPIO_UZED_LED);
+
+	/* Blink the GPIO LED 10 times */
+	i = 0;
+	while (i < 10) {
+		gpio_blink_led(gpio_ptr, GPIO_UZED_LED, 250000);
+		i++;
+	}
+	fprintf(stdout, "Completed LED flashing\n");
+
+	/* Now for pushbutton switch demonstration */
+
+	/* Set the direction of the GPIO pin that services the switch */
+	XGpioPs_SetDirectionPin(gpio_ptr, GPIO_UZED_PBSW, GPIO_INPUT);
+
+	/* Then toggle the LED each time debounced switch is pushed */
+	i = 0;
+	while (i < 10) {
+		gpio_wait_pbsw(gpio_ptr, GPIO_UZED_PBSW);
+		gpio_toggle_led(gpio_ptr, GPIO_UZED_LED);
+		i++;
+	}
+	fprintf(stdout, "Completed pushbutton / LED toggle\n");
+
 	free(gpio_ptr);
 	fprintf(stdout, "Done.\n");
 	cleanup_platform();
