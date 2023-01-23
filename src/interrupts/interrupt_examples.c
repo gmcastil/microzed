@@ -11,8 +11,8 @@
 #include "xil_exception.h"
 
 /* Microzed GPIO pins */
-#define GPIO_USER_LED		47	/* Bank 1, MIO 47 */
-#define GPIO_USER_PBSW		51	/* Bank 1, MIO 51 */
+#define GPIO_USER_LED		47 /* Bank 1, MIO 47 */
+#define GPIO_USER_PBSW		51 /* Bank 1, MIO 51 */
 
 #define GPIO_PIN_INPUT		0
 #define GPIO_PIN_OUTPUT		1
@@ -21,17 +21,18 @@
 #define GPIO_PIN_OFF		0
 #define GPIO_PIN_ON		1
 
+/* Avnet FMC carrier card GPIO pins */
 #define ASCII_ESC		27
 
 static void GpioPbswHandler(void *CallbackRef, u32 Bank, u32 Status);
-void IntrStatusDisplay(XGpioPs * Gpio, XScuGic * Gic, u32 GpioBank,
-		       u32 GpioPin);
 
 static void GpioPbswHandler(void *CallbackRef, u32 Bank, u32 Status)
 {
 	static int PressCnt = 0;
-	printf("Button pressed %d\n", ++PressCnt);
+	fprintf(stderr, "Button pressed %d\n", ++PressCnt);
+	/* Sleep 200ms to avoid bouncing switches */
 	usleep(200000);
+	return;
 }
 
 int main(int argc, char *argv[])
@@ -56,14 +57,12 @@ int main(int argc, char *argv[])
 	/* Set up GPIO driver */
 	Gpio = malloc(sizeof(XGpioPs));
 	if (Gpio == NULL) {
-		fprintf(stderr,
-			"Could not allocate memory for GPIO instance\n");
+		fprintf(stderr, "Could not allocate memory for GPIO instance\n");
 		return XST_FAILURE;
 	}
 
 	GpioConfig = XGpioPs_LookupConfig(XPAR_XGPIOPS_0_DEVICE_ID);
-	Status =
-	    XGpioPs_CfgInitialize(Gpio, GpioConfig, GpioConfig->BaseAddr);
+	Status = XGpioPs_CfgInitialize(Gpio, GpioConfig, GpioConfig->BaseAddr);
 
 	if (Status != XST_SUCCESS) {
 		fprintf(stderr, "Could not initialize GPIO instance\n");
@@ -93,15 +92,12 @@ int main(int argc, char *argv[])
 	/* Set up GIC driver */
 	Gic = malloc(sizeof(XScuGic));
 	if (Gic == NULL) {
-		fprintf(stderr,
-			"Could not allocate memory for GIC instance\n");
+		fprintf(stderr, "Could not allocate memory for GIC instance\n");
 		return XST_FAILURE;
 	}
 
 	GicConfig = XScuGic_LookupConfig(XPAR_SCUGIC_SINGLE_DEVICE_ID);
-	Status =
-	    XScuGic_CfgInitialize(Gic, GicConfig,
-				  GicConfig->CpuBaseAddress);
+	Status = XScuGic_CfgInitialize(Gic, GicConfig, GicConfig->CpuBaseAddress);
 
 	if (Status != XST_SUCCESS) {
 		fprintf(stderr, "Could not initialize GIC instance\n");
@@ -124,9 +120,10 @@ int main(int argc, char *argv[])
 	 * Registers the GIC interrupt handler with the exception handling logic
 	 * within the ARM Cortex A9 processor
 	 */
-	Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_INT,
-				     (Xil_ExceptionHandler)
-				     XScuGic_InterruptHandler, Gic);
+	Xil_ExceptionRegisterHandler(
+			XIL_EXCEPTION_ID_INT,
+			(Xil_ExceptionHandler) XScuGic_InterruptHandler,
+			Gic);
 
 	/*
 	 * There is a meaningful distinction between callback functions and interrupt
@@ -134,20 +131,21 @@ int main(int argc, char *argv[])
 	 * provides an interrupt handler function that gets paired with a callback
 	 * reference.
 	 */
-	Status = XScuGic_Connect(Gic,
-				 XPS_GPIO_INT_ID,
-				 (Xil_ExceptionHandler)
-				 XGpioPs_IntrHandler, (void *) Gpio);
+	Status = XScuGic_Connect(
+			Gic,
+			XPS_GPIO_INT_ID,
+			(Xil_ExceptionHandler) XGpioPs_IntrHandler,
+			(void *) Gpio);
 
 	if (Status != XST_SUCCESS) {
-		fprintf(stderr,
-			"Could not connect GPIO interrupt handler to interrupt controller\n");
+		fprintf(stderr, "Could not connect GPIO interrupt handler to interrupt controller\n");
 	}
 
 	/* Define a rising edge for GPIO interrupts on the PBSW pin */
-	XGpioPs_SetIntrTypePin(Gpio,
-			       GPIO_USER_PBSW,
-			       XGPIOPS_IRQ_TYPE_EDGE_RISING);
+	XGpioPs_SetIntrTypePin(
+			Gpio,
+			GPIO_USER_PBSW,
+			XGPIOPS_IRQ_TYPE_EDGE_RISING);
 
 	/*
 	 * Define the function to be called by the GPIO interrupt handler when an
@@ -179,22 +177,21 @@ int main(int argc, char *argv[])
 	/* Display GPIO interrupt status for banks and pins */
 	for (i = 0; i < XGPIOPS_MAX_BANKS; i++) {
 		printf("GPIO bank %d interrupt enabled\t\t0x%08lx\n",
-		       i, XGpioPs_IntrGetEnabled(Gpio, i));
+				i, XGpioPs_IntrGetEnabled(Gpio, i));
 	}
 
 	printf("\n");
 	/* Confirm interrupts only enabled for GPIO push button */
 	if (XGpioPs_IntrGetEnabledPin(Gpio, GPIO_USER_LED)) {
-		printf("Interrupts enabled for GPIO pin %d\n",
-		       GPIO_USER_LED);
+		printf("Interrupts enabled for GPIO pin %d\n", GPIO_USER_LED);
 	}
 	if (XGpioPs_IntrGetEnabledPin(Gpio, GPIO_USER_PBSW)) {
-		printf("Interrupts enabled for GPIO pin %d\n",
-		       GPIO_USER_PBSW);
+		printf("Interrupts enabled for GPIO pin %d\n", GPIO_USER_PBSW);
 	}
 
 	printf("Waiting for button press...\n");
-	usleep(12 * 1E6);
+	/* Stall for 12 seconds and then finish up */
+	usleep(12*1e6);
 	printf("Finished\n");
 
 	free(Gpio);
