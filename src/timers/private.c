@@ -8,9 +8,22 @@
 #include "xscutimer.h"
 #include "xscugic.h"
 
+/* Canonical device ID definitions from xparameters.h */
 #define TIMER_DEVICE_ID		XPAR_XSCUTIMER_0_DEVICE_ID
+#define GIC_DEVICE_ID		XPAR_SCUGIC_0_DEVICE_ID
 
 #define ASCII_ESC		27
+
+void MemCleanup(void *ptra, void *ptrb)
+{
+	if (ptra != NULL) {
+		free(ptra);
+	}
+	if (ptrb != NULL) {
+		free(ptrb);
+	}
+	return;
+}
 
 /* Initialize the timer subsystem and perform a timer self-test */
 int SetupTimerSystem(XScuTimer *Timer, XScuTimer_Config *TimerConfig)
@@ -26,7 +39,7 @@ int SetupTimerSystem(XScuTimer *Timer, XScuTimer_Config *TimerConfig)
 
 	Status = XScuTimer_CfgInitialize(Timer, TimerConfig, TimerConfig->BaseAddr);
 	if (Status == XST_DEVICE_IS_STARTED) {
-		fprintf(stdout, "Timer device ID %d already started\n",
+		fprintf(stderr, "Timer device ID %d already started\n",
 				TIMER_DEVICE_ID);
 		return XST_FAILURE;
 	} else {
@@ -34,6 +47,35 @@ int SetupTimerSystem(XScuTimer *Timer, XScuTimer_Config *TimerConfig)
 		if (Status == XST_FAILURE) {
 			fprintf(stderr, "Self test failed for timer device ID %d\n",
 					TIMER_DEVICE_ID);
+			return XST_FAILURE;
+		} else {
+			return XST_SUCCESS;
+		}
+	}
+}
+
+/* Initialize the GIC interrupt subsystem and perform a GIC self-test */
+int SetupIntrSystem(XScuGic *Gic, XScuGic_Config *GicConfig)
+{
+	int Status = 0;
+
+	GicConfig = XScuGic_LookupConfig(GIC_DEVICE_ID);
+	if (GicConfig == NULL) {
+		fprintf(stderr, "Failed to lookup configuration for GIC ID %d\n",
+				GIC_DEVICE_ID);
+		return XST_FAILURE;
+	}
+
+	Status = XScuGic_CfgInitialize(Gic, GicConfig, GicConfig->CpuBaseAddress);
+	/* 
+	 * GIC driver documentation is unclear as to how failure to initialize is
+	 * handled, so check for XST_SUCCESS rather than XST_FAILURE
+	 */
+	if (Status == XST_SUCCESS) {
+		Status = XScuGic_SelfTest(Gic);
+		if (Status == XST_FAILURE) {
+			fprintf(stderr, "Self test failed for GIC ID %d\n",
+					GIC_DEVICE_ID);
 			return XST_FAILURE;
 		} else {
 			return XST_SUCCESS;
@@ -65,10 +107,10 @@ int main(int args, char *argv[])
 	int Status;
 
 	XScuTimer_Config *TimerConfig;
-	XScuTimer *Timer;
+	XScuTimer *Timer = NULL;
 
 	XScuGic_Config *GicConfig;
-	XScuGic *Gic;
+	XScuGic *Gic = NULL;
 
 	/* Enable PS7 cache and UART */
 	init_platform();
@@ -81,54 +123,35 @@ int main(int args, char *argv[])
 	Timer = malloc(sizeof(XScuTimer));
 	if (Timer == NULL) {
 		fprintf(stderr, "Could not allocate memory for timer subsystem\n");
+		MemCleanup(Gic, Timer);
 		return XST_FAILURE;
 	}
 	Status = SetupTimerSystem(Timer, TimerConfig);
 	fprintf(stdout, "Initialize private timer subsystem\t\t\t");
-	if ( Status == XST_FAILURE ) {
+	if (Status == XST_FAILURE) {
 		fprintf(stdout, "FAILED\n");
-		free(Timer);
+		MemCleanup(Gic, Timer);
+		return XST_FAILURE;
 	} else {
-		fprintf(stdout, "SUCCESS\n");
+		fprintf(stdout, "COMPLETE\n");
 	}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	/* Create a GIC driver instance */
+	/* Create a generic interrupt controller instance */
 	Gic = malloc(sizeof(XScuGic));
 	if (Gic == NULL) {
-		fprintf(stderr, "Could not allocate memory for GIC instance\n");
+		fprintf(stderr, "Could not allocate memory for GIC subsystem\n");
+		MemCleanup(Gic, Timer);
 		return XST_FAILURE;
 	}
-	GicConfig = XScuGic_LookupConfig(
-
-
-
-
-
+	Status = SetupIntrSystem(Gic, GicConfig);
+	fprintf(stdout, "Initialize GIC subsystem\t\t\t");
+	if (Status == XST_FAILURE) {
+		fprintf(stdout, "FAILED\n");
+		MemCleanup(Gic, Timer);
+		return XST_FAILURE;
+	} else {
+		fprintf(stdout, "COMPLETE\n");
+	}
 
 	return 0;
 }
