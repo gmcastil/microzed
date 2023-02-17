@@ -1,3 +1,4 @@
 proj/
 *~
-
+# Ignore the random swap files that Vim leaves behind
+.*.swp
