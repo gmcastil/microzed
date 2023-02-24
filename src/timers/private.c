@@ -150,6 +150,14 @@ void SetTimerDuration(XScuTimer *Timer, uint32_t sec, int one_shot)
 	 *
 	 * Determine the 32-bit private timer period based on the clocking ratio, then
 	 * calculate the value to load into the timer. Ignore the prescaler for now.
+	 *
+	 * Some of the language is a bit confusing - the phrase "half the CPU
+	 * frequency (CPU_3x2x)" really means that the timer is clocked at
+	 * whatever frequency the CPU_3x2c clock is run at, which is half of the
+	 * CPU_6x4x clock.  Table 25-1 in the TRM and section 25.2 on "CPU
+	 * Clock" make these relationships explicit and are well worth a bit of
+	 * study if it is unclear which portions of the device are clocked at
+	 * which rates.
 	 */
 
 	uint32_t clk_ratio_mode = 0;
@@ -161,8 +169,8 @@ void SetTimerDuration(XScuTimer *Timer, uint32_t sec, int one_shot)
 	XScuTimer_DisableInterrupt(Timer);
 	XScuTimer_ClearInterruptStatus(Timer);
 	printf("Load reg\t\t\t0x%08"PRIx32"\n", Timer_GetLoadReg(Timer));
-    printf("Counter reg\t\t\t0x%08"PRIx32"\n", Timer_GetCounterReg(Timer));
-    printf("Control reg\t\t\t0x%08"PRIx32"\n", Timer_GetControlReg(Timer));
+	printf("Counter reg\t\t\t0x%08"PRIx32"\n", Timer_GetCounterReg(Timer));
+	printf("Control reg\t\t\t0x%08"PRIx32"\n", Timer_GetControlReg(Timer));
 
 	/* Determine the CPU clock ratio mode and tick duration */
 	clk_ratio_mode = Xil_In32((SLCR_BASE_ADDR) + (CLK_621_TRUE)) & 0x00000001;
@@ -185,7 +193,7 @@ void SetTimerDuration(XScuTimer *Timer, uint32_t sec, int one_shot)
 	XScuTimer_LoadTimer(Timer, ticks);
 	printf("Load reg\t\t\t0x%08"PRIx32"\n", Timer_GetLoadReg(Timer));
 	printf("Counter reg\t\t\t0x%08"PRIx32"\n", Timer_GetCounterReg(Timer));
-    printf("Control reg\t\t\t0x%08"PRIx32"\n", Timer_GetControlReg(Timer));
+	printf("Control reg\t\t\t0x%08"PRIx32"\n", Timer_GetControlReg(Timer));
 
 	return;
 }
