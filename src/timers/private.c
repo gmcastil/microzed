@@ -2,17 +2,18 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "xstatus.h"
 #include "xparameters.h"
 #include "platform.h"
 #include "xscutimer.h"
 #include "xscugic.h"
+#include "xil_types.h"
+#include "xil_io.h"
 
 /* Definitions for hard peripherals attached to the Cortex A9 (e.g., interrupts) */
 #include "xparameters_ps.h"
-
-#include "ps7_rev.h"
 
 /* Canonical device ID definitions from xparameters.h */
 #define TIMER_DEVICE_ID		XPAR_XSCUTIMER_0_DEVICE_ID
@@ -21,13 +22,40 @@
 /* Triple timer and watchdog timers for each processor are also available */
 #define TIMER_INTR_ID       XPS_SCU_TMR_INT_ID
 
-#define ASCII_ESC		27
+/* SLCR definitions */
+#define SLCR_BASE_ADDR      0xF8000000
+#define CLK_621_TRUE        0x000001C4
+
+#define CLK_400_NS          2.500
+#define CLK_300_NS          3.333
+
+#define ASCII_ESC	        27
+
+#define MAX_TIMER_COUNT     10
 
 /* Function declarations */
 void MemCleanup(void *ptra, void *ptrb);
 int SetupTimerSystem(XScuTimer *Timer, XScuTimer_Config *TimerConfig);
 int SetupIntrSystem(XScuGic *Gic, XScuGic_Config *GicConfig);
 static void TimerIntrHandler(void *CallBackRef);
+
+/* Reimplementing a few of the XScuTimer driver functions that do not work in the 7.0 SDK driver */
+uint32_t Timer_GetLoadReg(XScuTimer *Timer) {return Xil_In32((Timer->Config.BaseAddr) + (XSCUTIMER_LOAD_OFFSET));}
+uint32_t Timer_GetCounterReg(XScuTimer *Timer){return Xil_In32((Timer->Config.BaseAddr) + (XSCUTIMER_COUNTER_OFFSET));}
+
+/*
+ * Per Cortex-A9 TRM r4p0 we get the following bit assignments
+ *
+ * [31:16]      UNK / SBZP
+ * [15:8]       Prescaler
+ * [7:3]        UNK / SBZP
+ * [2]          IRQ enable (if set, ID 29 is set as pending)
+ * [1]          Auto-reload mode
+ * [0]          Timer enable
+ */
+uint32_t Timer_GetControlReg(XScuTimer *Timer){return Xil_In32((Timer->Config.BaseAddr) + (XSCUTIMER_CONTROL_OFFSET));}
+
+static int TimerCount = 0;
 
 void MemCleanup(void *ptra, void *ptrb)
 {
@@ -74,6 +102,7 @@ int SetupIntrSystem(XScuGic *Gic, XScuGic_Config *GicConfig)
 {
 	int Status = 0;
 
+	Xil_ExceptionInit();
 	GicConfig = XScuGic_LookupConfig(GIC_DEVICE_ID);
 	if (GicConfig == NULL) {
 		fprintf(stderr, "Failed to lookup configuration for GIC ID %d\n",
@@ -102,11 +131,15 @@ int SetupIntrSystem(XScuGic *Gic, XScuGic_Config *GicConfig)
 
 static void TimerIntrHandler(void *CallBackRef)
 {
-	static uint32_t i = 0;
-	printf("Timer expired, count = %"PRIu32"\n", i++);
+	XScuTimer *Timer = (XScuTimer *) CallBackRef;
+	XScuTimer_ClearInterruptStatus(Timer);
+	printf("Timer expired, count = %d\n", ++TimerCount);
+	fflush(stdout);
+
+	return;
 }
 
-void SetTimerDuration(XScuTimer *Timer, uint32_t duration, int one_shot)
+void SetTimerDuration(XScuTimer *Timer, uint32_t sec, int one_shot)
 {
 	/*
 	 * All private timers and watchdog timers are always clocked at 1/2 of
@@ -116,12 +149,53 @@ void SetTimerDuration(XScuTimer *Timer, uint32_t duration, int one_shot)
 	 *  - 4:2:1 CPU_3x2x = 300MHz
 	 *
 	 * Determine the 32-bit private timer period based on the clocking ratio, then
-	 * calculate the timer prescaler value, followed by the 32-bit value to load into
-	 * the timer.
+	 * calculate the value to load into the timer. Ignore the prescaler for now.
+	 *
+	 * Some of the language is a bit confusing - the phrase "half the CPU
+	 * frequency (CPU_3x2x)" really means that the timer is clocked at
+	 * whatever frequency the CPU_3x2c clock is run at, which is half of the
+	 * CPU_6x4x clock.  Table 25-1 in the TRM and section 25.2 on "CPU
+	 * Clock" make these relationships explicit and are well worth a bit of
+	 * study if it is unclear which portions of the device are clocked at
+	 * which rates.
 	 */
 
-	printf("Current prescaler value\t\t\t%"PRIu8"\n", XScuTimer_GetPrescaler(Timer));
+	uint32_t clk_ratio_mode = 0;
+	uint32_t tick_period_ns = 0;
+	uint32_t ticks = 0;
 
+	/* Shut everything up before touching the timer */
+	XScuTimer_Stop(Timer);
+	XScuTimer_DisableInterrupt(Timer);
+	XScuTimer_ClearInterruptStatus(Timer);
+	printf("Load reg\t\t\t0x%08"PRIx32"\n", Timer_GetLoadReg(Timer));
+	printf("Counter reg\t\t\t0x%08"PRIx32"\n", Timer_GetCounterReg(Timer));
+	printf("Control reg\t\t\t0x%08"PRIx32"\n", Timer_GetControlReg(Timer));
+
+	/* Determine the CPU clock ratio mode and tick duration */
+	clk_ratio_mode = Xil_In32((SLCR_BASE_ADDR) + (CLK_621_TRUE)) & 0x00000001;
+	if (clk_ratio_mode) {
+		printf("CPU clock ratio mode\t\t6:2:1\n");
+		tick_period_ns = CLK_400_NS;
+	} else {
+		printf("CPU clock ratio mode\t\t4:2:1\n");
+		tick_period_ns = CLK_300_NS;
+	}
+	ticks = (uint32_t) (sec * (1e9) / tick_period_ns);
+
+	if (one_shot) {
+		printf("Auto reload disabled\n");
+		XScuTimer_DisableAutoReload(Timer);
+	} else {
+		printf("Enabling auto reload\n");
+		XScuTimer_EnableAutoReload(Timer);
+	}
+	XScuTimer_LoadTimer(Timer, ticks);
+	printf("Load reg\t\t\t0x%08"PRIx32"\n", Timer_GetLoadReg(Timer));
+	printf("Counter reg\t\t\t0x%08"PRIx32"\n", Timer_GetCounterReg(Timer));
+	printf("Control reg\t\t\t0x%08"PRIx32"\n", Timer_GetControlReg(Timer));
+
+	return;
 }
 
 int main(int args, char *argv[])
@@ -239,11 +313,26 @@ int main(int args, char *argv[])
 	XScuGic_Connect(
 			Gic,
 			TIMER_INTR_ID,
-			(Xil_InterruptHandler) TimerIntrHandler,
-			Timer);
+			(Xil_ExceptionHandler) TimerIntrHandler,
+			(void *) Timer);
 
-	/* Configure the timer in one-shot mode for 3 seconds */
-	SetTimerDuration(Timer, 1024, 1);
+	/* Configure the timer in auto-reload mode for 1 second */
+	SetTimerDuration(Timer, 1, 0);
+
+	/* Enable interrupts from the timer subsystem */
+	XScuTimer_EnableInterrupt(Timer);
+	/* Enable timer interrupts within the GIC */
+	XScuGic_Enable(Gic, TIMER_INTR_ID);
+	/* Enable interrupts at the Cortex-A9 exception handler */
+	Xil_ExceptionEnableMask(XIL_EXCEPTION_IRQ);
+
+	printf("Starting timer\n");
+	printf("Int = 0x%"PRIx32"\n", XScuTimer_GetInterruptStatus(Timer));
+	XScuTimer_Start(Timer);
+	while (TimerCount < MAX_TIMER_COUNT) {
+		/* Waiting for MAX_TIMER_COUNT interrupts */
+	}
+	printf("Counted %d interrupts\n", TimerCount);
 
 	MemCleanup(Gic, Timer);
 	cleanup_platform();

@@ -2,3 +2,6 @@ proj/
 *~
 # Ignore the random swap files that Vim leaves behind
 .*.swp
+# I occasionally drop Adam Taylor's source code in this repo and don't
+# need to version control it.
+taylor/
