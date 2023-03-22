@@ -3,11 +3,6 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-/*
- * - Rewrite interrupt handler to use a switch statement for the different kinds of interrupts
- * - TTC setup for interval mode, decrement, generating interrupts, interval / prescaler
- */
-
 /* Required libraries for interrupt handling */
 #include "xscugic.h"
 #include "xil_exception.h"
@@ -18,7 +13,6 @@
 #include "platform.h"
 #include "sleep.h"
 
-/* Functions for summarizing TTC output registers to stdout */
 #include "ttc_dbg.h"
 #include "ps7_dbg.h"
 
@@ -33,7 +27,7 @@
 #define TTC0_IRQ_ID					XPS_TTC0_0_INT_ID
 
 #define ASCII_ESC					27
-#define EXPIRE_SECONDS				10
+#define EXPIRE_SECONDS				100
 
 static int expired = 0;
 
@@ -96,118 +90,78 @@ void setup_generic_intr_ctrl(XScuGic *gic, XScuGic_Config *gic_config)
 	return;
 }
 
-/* Creates a TTC instance for the requested TTC device ID */
 void setup_triple_timer(XTtcPs *ttc, XTtcPs_Config *ttc_config, int device_id)
 {
-	int status = 0;
-	int pass = 0;
+       int status = 0;
+       int pass = 0;
 
-	char msg[50];
+       char msg[50];
 
-	snprintf(msg, 50, "Configuring triple timer device ID %d", TTC_DEVICE_ID);
-	print_operation(msg);
-	ttc_config = XTtcPs_LookupConfig(TTC_DEVICE_ID);
-	if ( ttc_config == NULL ) {
-		fprintf(stderr, "Could not find configuration for TTC device ID %d\n", TTC_DEVICE_ID);
-	} else {
-		status = XTtcPs_CfgInitialize(ttc, ttc_config, ttc_config->BaseAddress);
-		if ( status == XST_DEVICE_IS_STARTED ) {
-				XTtcPs_Stop(ttc);
-				if ( XTtcPs_GetInterruptStatus(ttc) ) {
-					fprintf(stderr, "Clearing pending interrupt\n");
-					XTtcPs_ClearInterruptStatus(ttc, XTTCPS_IXR_ALL_MASK);
-				}
-				if ( XTtcPs_IsStarted(ttc) ) {
-					fprintf(stderr, "Could not stop TTC device ID %d\n", TTC_DEVICE_ID);
-				} else {
-					fprintf(stdout, "Reinitializing TTC device ID %d\n", TTC_DEVICE_ID);
-					status = XTtcPs_CfgInitialize(ttc, ttc_config, ttc_config->BaseAddress);
-					if ( status == XST_DEVICE_IS_STARTED ) {
-						fprintf(stdout, "Could not reinitialize TTC device ID %d\n", TTC_DEVICE_ID);
-					}
-				}
-		}
-		if ( status == XST_SUCCESS ) {
-			XTtcPs_DisableInterrupts(ttc, XTTCPS_IXR_ALL_MASK);
-			pass = 1;
-		}
-	}
-	if ( pass == 1 ) {
-		print_result("OK");
-	} else {
-		print_result("FAIL");
-	}
+       snprintf(msg, 50, "Configuring triple timer device ID %d", device_id);
+       print_operation(msg);
+       ttc_config = XTtcPs_LookupConfig(device_id);
+       if ( ttc_config == NULL ) {
+               fprintf(stderr, "Could not find configuration for TTC device ID %d\n", device_id);
+       } else {
+               status = XTtcPs_CfgInitialize(ttc, ttc_config, ttc_config->BaseAddress);
+               /*
+                * In cases where the application was relaunched, the timer will still be running
+                * and the configuration will indicate this, so we stop the timer, clear any pending
+                * interrupts, and then make sure that the TTC is in the factory state before we
+                * conclude the setup routine.
+                */
+               if ( status == XST_DEVICE_IS_STARTED ) {
+            	   XTtcPs_Stop(ttc);
+            	   if ( XTtcPs_GetInterruptStatus(ttc) ) {
+            		   fprintf(stderr, "Cleared pending interrupt\n");
+            		   XTtcPs_ClearInterruptStatus(ttc, XTTCPS_IXR_ALL_MASK);
+            	   }
+            	   /* Tried to stop the timer but it is still running */
+            	   if ( XTtcPs_IsStarted(ttc) ) {
+            		   fprintf(stderr, "Could not stop TTC device ID %d\n", device_id);
+            	   } else {
+            		   fprintf(stdout, "Reinitializing TTC device ID %d\n", device_id);
+            		   status = XTtcPs_CfgInitialize(ttc, ttc_config, ttc_config->BaseAddress);
+            		   if ( status == XST_DEVICE_IS_STARTED ) {
+            			   fprintf(stdout, "Could not reinitialize TTC device ID %d\n", device_id);
+            		   }
+            	   }
+               }
+               if ( status == XST_SUCCESS ) {
+                       XTtcPs_DisableInterrupts(ttc, XTTCPS_IXR_ALL_MASK);
+                       pass = 1;
+               }
+       }
+       if ( pass == 1 ) {
+               print_result("OK");
+       } else {
+               print_result("FAIL");
+       }
+       return;
 }
 
-void config_ttc_interval(XTtcPs *ttc, uint32_t freq)
+void config_ttc_interval(XTtcPs *ttc, int duration)
 {
-        /* The interrupt interval is platform dependent, hence the use of typedefs for this */
-        XInterval *interval = NULL;
-        XInterval check_interval = 0;
+	/* We hard code the 1 second we are trying to get for now */
+	uint16_t interval = 0xBEBC;
+	uint8_t prescaler = 8;
 
-        XInterval hack_interval = 48828;
-        u8 hack_prescaler = 10;
-
-        u8 *prescaler = NULL;
-        u8 check_prescaler = 0;
-
-        uint32_t options = 0;
-        uint32_t check_options = 0;
-
-        char str[50];
-
-        if ( ttc == NULL ) {
-                fprintf(stderr, "Cannot dereference NULL pointer\n");
-        } else {
-                /* Calculate and configure the interval settings */
-                snprintf(str, 50, "Configuring TTC with interrupt frequency %"PRId32" Hz", freq);
-                print_operation(str);
-                XTtcPs_CalcIntervalFromFreq(ttc, freq, interval, prescaler);
-                interval = &hack_interval;
-                prescaler = &hack_prescaler;
-                /* One of these is platform dependent, the other is hard coded in the driver source */
-                if ( ( *interval == XTTCPS_MAX_INTERVAL_COUNT ) && ( *prescaler == 0xFF ) ) {
-                        fprintf(stderr, "Unsuccessful TTC interval calculation\n");
-                } else {
-                        XTtcPs_SetInterval(ttc, *interval);
-                        XTtcPs_SetPrescaler(ttc, *prescaler);
-                        check_interval = XTtcPs_GetInterval(ttc);
-                        check_prescaler = XTtcPs_GetPrescaler(ttc);
-                        if ( ( check_interval != *interval ) || ( check_prescaler != *prescaler ) ) {
-                                print_result("FAIL");
-                                fprintf(stderr, "Could not configure TTC interval or prescaler\n");
-                                fprintf(stderr, "Interval:\t\tExpected: 0x%08"PRIx32"\tReceived: 0x%08"PRIx32"\n",
-                                                (uint32_t) *interval, (uint32_t) check_interval);
-                                fprintf(stderr, "Prescaler:\t\tExpected: 0x%02"PRIx8"\tReceived: 0x%02"PRIx8"\n",
-                                                *prescaler, check_prescaler);
-                        } else {
-                                print_result("OK");
-                        }
-                }
-                /*
-                 * Set options appropriately for this configuration - NOTE THAT WE ARE USING AN EXTERNAL CLOCK!
-                 * So if your hardware is designed differently, this is the place to make those changes.  Why use
-                 * an external clock for this example?  Well, dear reader, its because eventually there will be
-                 * an ILA core hanging off the waveform output.  That ILA needs a clock source and the CPU_1x
-                 * clock which drives the TTC by default is not available as a fabric clock.
-                 */
-                options = XTtcPs_GetOptions(ttc);
-                options |= XTTCPS_OPTION_DECREMENT
-                			| XTTCPS_OPTION_EXTERNAL_CLK
-							| XTTCPS_OPTION_INTERVAL_MODE
-							| XTTCPS_OPTION_WAVE_DISABLE;
-                XTtcPs_SetOptions(ttc, options);
-                check_options = XTtcPs_GetOptions(ttc);
-                if ( options != check_options ) {
-                	fprintf(stderr, "Could not set TTC options\n");
-                	fprintf(stderr, "Interval:\t\tExpected: 0x%08"PRIx32"\tReceived: 0x%08"PRIx32"\n",
-                            options, check_options);
-                }
-        }
-        return;
+	XTtcPs_SetPrescaler(ttc, prescaler);
+	if ( XTtcPs_GetPrescaler(ttc) != prescaler ) {
+		fprintf(stderr, "Could not set prescaler value\n");
+	}
+	XTtcPs_SetInterval(ttc, interval);
+	if ( XTtcPs_GetInterval(ttc) != interval ) {
+		fprintf(stderr, "Could not set interval value\n");
+	}
+	/*
+	 * In a world where the standalone drivers could be trusted, this is probably
+	 * a good place to turn on interval mode, but alas, it is not.
+	 */
+	return;
 }
 
-/* Interrupt handler for TTC */
+/* Handler for TTC interrupts */
 static void ttc_intr_handler(void *callback_ref)
 {
 	uint32_t ttc_intr_status = 0;
@@ -235,6 +189,9 @@ static void ttc_intr_handler(void *callback_ref)
 
 int main(int args, char *argv[])
 {
+	/* Storage for reading and writing values to control registers */
+	uint32_t val32 = 0;
+
 	XScuGic *gic = NULL;
 	XScuGic_Config *gic_config = NULL;
 
@@ -257,18 +214,9 @@ int main(int args, char *argv[])
 	}
 
 	setup_triple_timer(ttc, ttc_config, TTC_DEVICE_ID);
-	print_operation("Running TTC self test");
-	if ( XTtcPs_SelfTest(ttc) == XST_SUCCESS ) {
-		print_result("OK");
-	} else {
-		print_result("FAIL");
-	}
-
-	config_ttc_interval(ttc, 1);
 
 	/* Connect an interrupt handler for the IRQ ID of the chosen timer */
 	XScuGic_Connect(gic, TTC0_IRQ_ID, (Xil_InterruptHandler) ttc_intr_handler, (void *) ttc);
-
 	/* Enable interrupt exceptions in the processor */
 	Xil_ExceptionEnable();
 	/* Enable interrupts at the GIC */
@@ -277,30 +225,47 @@ int main(int args, char *argv[])
 	XTtcPs_EnableInterrupts(ttc, XTTCPS_IXR_INTERVAL_MASK);
 
 	fprintf(stdout, "Starting...\n");
-	fprintf(stdout, "Silicon Revision 0x%"PRIx32"\n", (uint32_t) ps7_dbg_get_ps_version());
-	ttc_dbg_print_input_freq(ttc);
-	ttc_dbg_print_options(ttc);
-	ttc_dbg_print_interval(ttc);
-	fflush(stdout);
+	fprintf(stdout, "%-20s0x%01"PRIx32"\n", "Silicon Rev", ps7_dbg_get_ps_version());
+	fprintf(stdout, "%-20s0x%02"PRIx32"\n", "Manufacturer ID", ps7_dbg_get_mfr_id());
+	fprintf(stdout, "%-20s0x%02"PRIx32"\n", "Device Code", ps7_dbg_get_device_code());
 
+	ttc_dbg_print_input_freq(ttc);
+	ttc_dbg_print_interval(ttc);
+	ttc_dbg_print_options(ttc);
+
+	fprintf(stdout, "%-20s0x%08"PRIx32"\n", "CLK 0 CTRL", ttc_dbg_clk_ctrl(0, 0));
+	fprintf(stdout, "%-20s0x%08"PRIx32"\n", "CNT 0 CTRL", ttc_dbg_cnt_ctrl(0, 0));
+	ttc_dbg_print_summary(0, 0);
+
+	fprintf(stdout, "Configuring TTC%d for 1 second in interval mode\n", TTC_DEVICE_ID);
+	config_ttc_interval(ttc, 1);
+	/*
+	 * Now we need to manually set the clock and count control registers because the
+	 * standalone driver does not
+	 * - Set an external clock and keep the prescale and prescale enable bits untouched
+	 * - Enable interval mode in the count controller and leave everything else alone
+	 */
+
+	val32 = ttc_dbg_clk_ctrl(0, 0);
+	/* Clock source is determined by bit 5 in the clock control register */
+	val32 |= (0x0020);
+	ttc_dbg_set_clk_ctrl(0, 0, val32);
+
+
+	val32 = ttc_dbg_cnt_ctrl(0, 0);
+	/* Interval mode is determined by bit 1 in the counter control register */
+	val32 |= (0x0002);
+	ttc_dbg_set_cnt_ctrl(0, 0, val32);
+	printf("Starting timer...\n");
 	XTtcPs_Start(ttc);
 
-	/*
-	for (i=0; i<EXPIRE_SECONDS; i++) {
-		sleep(1);
-		printf("Sleeping...%d\n", i+1);
-	}
-	*/
-
+	ttc_dbg_print_summary(0, 0);
 	for (;;) {
-		if (expired) {
-			XTtcPs_Stop(ttc);
+		if ( expired == 1 ) {
 			break;
 		}
 	}
-
-	fprintf(stdout, "Finished.\n");
-	fflush(stdout);
+	printf("Done\n");
 
 	free(gic);
 	free(ttc);
