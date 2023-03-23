@@ -1,3 +1,10 @@
+/*
+ * This program assumes that TTC0 has been configured to use an external
+ * 25 MHz clock.  Note that several of the Xilinx API functions for the
+ * triple timer counters have been demonstrated to not work properly and
+ * had to be implemented directly via some workaround code.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -9,10 +16,9 @@
 
 /* Triple timer counter libraries */
 #include "xttcps.h"
-
 #include "platform.h"
-#include "sleep.h"
 
+/* Debug and workaround codes */
 #include "ttc_dbg.h"
 #include "ps7_dbg.h"
 
@@ -27,7 +33,7 @@
 #define TTC0_IRQ_ID					XPS_TTC0_0_INT_ID
 
 #define ASCII_ESC					27
-#define EXPIRE_SECONDS				100
+#define EXPIRE_SECONDS				10
 
 static int expired = 0;
 
@@ -142,7 +148,11 @@ void setup_triple_timer(XTtcPs *ttc, XTtcPs_Config *ttc_config, int device_id)
 
 void config_ttc_interval(XTtcPs *ttc, int duration)
 {
-	/* We hard code the 1 second we are trying to get for now */
+	/*
+	 * We hard code the 1 second we are trying to get for now because the
+	 * Xilinx API function `XTtcPs_CalcIntervalFromFreq()` does not return
+	 * the correct interval or prescaler value for a 25MHz clock
+	 */
 	uint16_t interval = 0xBEBC;
 	uint8_t prescaler = 8;
 
@@ -245,17 +255,16 @@ int main(int args, char *argv[])
 	 * - Set an external clock and keep the prescale and prescale enable bits untouched
 	 * - Enable interval mode in the count controller and leave everything else alone
 	 */
-
 	val32 = ttc_dbg_clk_ctrl(0, 0);
 	/* Clock source is determined by bit 5 in the clock control register */
 	val32 |= (0x0020);
 	ttc_dbg_set_clk_ctrl(0, 0, val32);
 
-
 	val32 = ttc_dbg_cnt_ctrl(0, 0);
 	/* Interval mode is determined by bit 1 in the counter control register */
 	val32 |= (0x0002);
 	ttc_dbg_set_cnt_ctrl(0, 0, val32);
+
 	printf("Starting timer...\n");
 	XTtcPs_Start(ttc);
 
