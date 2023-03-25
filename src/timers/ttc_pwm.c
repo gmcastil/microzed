@@ -237,8 +237,8 @@ int main(int args, char *argv[])
 
 	setup_triple_timer(ttc, ttc_config, TTC_DEVICE_ID);
 
-	/* 50% duty cycle for now */
-	config_pwm(ttc, 0xBEBC, 0xBEBC >> 1, 9);
+	/* 0x4C4B @25MHz with prescale = 6 is 100ms duration */
+	config_pwm(ttc, 0x4C4B, 0x4C4b >> 1, 6);
 
 	/* Connect an interrupt handler for the IRQ ID of the chosen timer */
 	XScuGic_Connect(gic, TTC0_IRQ_ID, (Xil_InterruptHandler) ttc_intr_handler, (void *) ttc);
@@ -261,11 +261,13 @@ int main(int args, char *argv[])
 	printf("Starting");
 	XTtcPs_Start(ttc);
 	for (;;) {
+		/*
 		if ( calls == (EXPIRE_SECONDS * 2) ) {
 			printf("Done\n");
 			XTtcPs_Stop(ttc);
 			break;
 		}
+		*/
 	}
 
 	return 0;
