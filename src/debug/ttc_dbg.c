@@ -47,6 +47,19 @@ void ttc_dbg_print_interval(XTtcPs *ttc)
 	return;
 }
 
+/* Print the interrupt enable register */
+void ttc_dbg_print_ier_status(uint32_t ttc_id, uint32_t counter_id)
+{
+	uint32_t ier = ttc_dbg_ier(ttc_id, counter_id);
+	printf("%-30s%d\n", "Event overflow:", (int) (ier & 0x20) >> 5);
+	printf("%-30s%d\n", "Counter overflow:", (int) (ier & 0x10) >> 4);
+	printf("%-30s%d\n", "Match 3:", (int) (ier & 0x08) >> 3);
+	printf("%-30s%d\n", "Match 2:", (int) (ier & 0x04) >> 2);
+	printf("%-30s%d\n", "Match 1:", (int) (ier & 0x02) >> 1);
+	printf("%-30s%d\n", "Interval:", (int) (ier & 0x01) >> 0);
+	return;
+}
+
 /* Summarize current state of the counter */
 void ttc_dbg_print_summary(uint32_t ttc_id, uint32_t counter_id)
 {
@@ -153,6 +166,21 @@ uint32_t ttc_dbg_interval_val(uint32_t ttc_id, uint32_t counter_id)
 	return val;
 }
 
+uint32_t ttc_dbg_ier(uint32_t ttc_id, uint32_t counter_id)
+{
+	uint32_t *addr = ttc_dbg_get_addr(ttc_id, counter_id, TTC_DBG_IER_OFFSET);
+	uint32_t val = 0;
+
+	if ( addr != NULL ) {
+		/* Interrupt enable register for each counter is bits [5:0] */
+		val = *addr & 0x3F;
+	} else {
+		val = TTC_DBG_ERROR;
+	}
+	return val;
+}
+
+/* Set the clock control register */
 void ttc_dbg_set_clk_ctrl(uint32_t ttc_id, uint32_t counter_id, uint32_t val)
 {
 	uint32_t *addr = ttc_dbg_get_addr(ttc_id, counter_id, TTC_DBG_CLK_CTRL_OFFSET);
@@ -160,6 +188,7 @@ void ttc_dbg_set_clk_ctrl(uint32_t ttc_id, uint32_t counter_id, uint32_t val)
 	return;
 }
 
+/* Set the counter control register */
 void ttc_dbg_set_cnt_ctrl(uint32_t ttc_id, uint32_t counter_id, uint32_t val)
 {
 	uint32_t *addr = ttc_dbg_get_addr(ttc_id, counter_id, TTC_DBG_CNT_CTRL_OFFSET);
@@ -167,6 +196,7 @@ void ttc_dbg_set_cnt_ctrl(uint32_t ttc_id, uint32_t counter_id, uint32_t val)
 	return;
 }
 
+/* Set the interval value register */
 void ttc_dbg_set_interval_val(uint32_t ttc_id, uint32_t counter_id, uint16_t val)
 {
 	uint32_t *addr = ttc_dbg_get_addr(ttc_id, counter_id, TTC_DBG_INTERVAL_VAL_OFFSET);
@@ -174,3 +204,10 @@ void ttc_dbg_set_interval_val(uint32_t ttc_id, uint32_t counter_id, uint16_t val
 	return;
 }
 
+void ttc_dbg_rst(uint32_t ttc_id, uint32_t counter_id)
+{
+	/* Per the TRM, it appears that the disable bit needs to be set before any others */
+	ttc_dbg_set_cnt_ctrl(0, 0, 0x00000021);
+	ttc_dbg_set_clk_ctrl(0, 0, 0x00000000);
+	return;
+}
