@@ -1,5 +1,9 @@
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <inttypes.h>
+
+#include "ps7_dbg.h"
 
 /*
  * The values and operations in these functions are intentionally hard-code
@@ -13,6 +17,14 @@
 
 /* Device configuration (devfg) registers */
 #define PS7_DBG_DEVCFG_MCTRL		0xF8007080
+
+void ps7_dbg_sanity_check()
+{
+	fprintf(stdout, "%-20s0x%01"PRIx32"\n", "Silicon Rev", ps7_dbg_get_ps_version());
+	fprintf(stdout, "%-20s0x%02"PRIx32"\n", "Manufacturer ID", ps7_dbg_get_mfr_id());
+	fprintf(stdout, "%-20s0x%02"PRIx32"\n", "Device Code", ps7_dbg_get_device_code());
+	return;
+}
 
 uint32_t ps7_dbg_get_ps_version()
 {
