@@ -101,11 +101,13 @@ uint32_t peripheral_multiply(uint32_t *p_ptr, uint32_t add_0, uint32_t add_1)
 }
 
 /* Try a function first and then use a macro instead to see the difference it makes */
-float altitude_to_pressure(float a, float b, float c, float x)
+/*float altitude_to_pressure(float a, float b, float c, float x)
 {
-	/* Simple quadratic equation */
 	return (a*(x*x)) + (b*x) + c;
 }
+*/
+
+#define altitude_to_pressure(a, b, c, x) (a*(x*x) + (b*x) + x)
 
 int main(int args, char *argv[])
 {
