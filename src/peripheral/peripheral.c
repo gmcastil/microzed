@@ -162,12 +162,19 @@ int main(int args, char *argv[])
 	printf("%-10s%-15s%-15s\n", "----", "----------", "-------");
 	XScuTimer_SetPrescaler(timer, 0);
 	XScuTimer_DisableAutoReload(timer);
-	for (i = 0; i < 10.0; i = i + 0.1) {
+	for (i = 0.0; i < 1.0; i = i + 0.1) {
 		XScuTimer_LoadTimer(timer, 0xFFFFFFFF);
 		start_time = XScuTimer_GetCounterValue(timer);
-		if ( start_time != 0xFFFFFFFF ) {
-			printf("Could not set start timer value\n");
-		}
+		XScuTimer_Start(timer);
+		result = altitude_to_pressure((-0.0088), (1.7673), (131.29), i);
+		XScuTimer_Stop(timer);
+		stop_time = XScuTimer_GetCounterValue(timer);
+		printf("%-10.2f%-15.6f%-12"PRIu32"\n", i, result, start_time - stop_time);
+	}
+
+	for (i = 0.0; i < 1.0; i = i + 0.1) {
+		XScuTimer_LoadTimer(timer, 0xFFFFFFFF);
+		start_time = XScuTimer_GetCounterValue(timer);
 		XScuTimer_Start(timer);
 		result = altitude_to_pressure((-0.0088), (1.7673), (131.29), i);
 		XScuTimer_Stop(timer);
