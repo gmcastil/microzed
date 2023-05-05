@@ -83,3 +83,31 @@ This makes me think that the problem is importing the project doesn't get the
 include paths the same, so it's unable to find this missing header.  I think the
 relative path that it inserted is wrong (big surprise there).
 
+Update
+- I finally got this to work, but man alive was it more complicated than it
+  needed to be.
+- First, the problem was that I was naively using the FreeRTOS board support
+  package option when I built the BSP, which was a mistake because I believe it
+  brought mismatching libraries in or something like that.  I have no idea what
+  Eclipse is doing when some of these options and operations are run. For
+  whatever reason, the `lwIP` library code from Xilinx that was being generated
+  has conflicting function prototypes with the one that ships with the FreeRTOS
+  demo (presumably, they changed their API at some point? maybe?). Anyway, I
+  stopped using the code shipped with the SDK and used what the FreeRTOS folks
+  used, and I was able to build the demo from scratch without any problems
+- Because the ZC702 and the Microzed use different GPIO to drive the LED, a
+  simple change in the `ParTest.c` source file was all that was required to get
+  it to do the long 3 sec blink at a time.
+- I loaded the ELF, programmed the FPGA, and saw the blinking light in hardware
+  that I was driving (the LED that the board has is not connected to the PL),
+  but my carrier card has LEDs on the board that are accessible from hardware
+- For posterity, to anyone that is looking to do something similar, it is
+  prudent to look at which version of the toolchain, C library, drivers, etc.
+  are supported and then go through the FreeRTOS git repository and use that
+  version instead. In my case, on 2019.1, the tools indiciated that version
+  10.1.1 was the kernel version that they had used. The FreeRTOS people tagged
+  their designs, so one can simply clone the entire FreeRTOS repo, checkout
+  the tag of interest, and then go from there.
+- Don't try using the latest released version
+
+
